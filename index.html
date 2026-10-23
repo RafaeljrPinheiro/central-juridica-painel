@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src https://jgjyrkbftxznsfqvwrgt.supabase.co; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Painel das Centrais</title>
+<style>
+:root { --fundo: #f4f2ee; --superficie: #fff; --tinta: #1b2333; --suave: #5d6577; --linha: #ddd8cf; --marinho: #1d2b45; --latao: #b08d57; --alerta: #a33a2a; --ok: #2f6b45; }
+@media (prefers-color-scheme: dark) { :root { --fundo: #12161f; --superficie: #1a202c; --tinta: #e8e6e1; --suave: #a3a9b6; --linha: #2c3444; --marinho: #0e1422; --alerta: #e0806f; --ok: #7cc495; } }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--fundo); color: var(--tinta); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { background: var(--marinho); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 3px solid var(--latao); position: sticky; top: 0; z-index: 2; }
+header h1 { margin: 0; font-size: 17px; flex: 1; }
+main { max-width: 640px; margin: 0 auto; padding: 12px 16px 40px; display: grid; gap: 12px; }
+.cartao { background: var(--superficie); border: 1px solid var(--linha); border-radius: 12px; padding: 14px; display: grid; gap: 8px; }
+h2 { margin: 0; font-size: 16px; }
+input, select { font: inherit; padding: 10px 12px; border: 1px solid var(--linha); border-radius: 8px; background: var(--fundo); color: var(--tinta); width: 100%; }
+button { font: inherit; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--linha); background: var(--superficie); color: var(--tinta); cursor: pointer; }
+button.principal { background: var(--latao); border-color: var(--latao); color: #1b1408; font-weight: 600; }
+.det { color: var(--suave); font-size: 14px; margin: 0; }
+.erro { color: var(--alerta); margin: 0; }
+.selo { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; border: 1px solid currentColor; }
+.ok { color: var(--ok); } .alerta { color: var(--alerta); } .neutro { color: var(--suave); }
+.abas { display: flex; gap: 6px; overflow-x: auto; }
+.abas button { flex: none; padding: 8px 14px; }
+.abas button.ativa { background: var(--marinho); color: #fff; border-color: var(--marinho); }
+.linha { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+#aviso { position: fixed; bottom: 16px; left: 16px; right: 16px; background: var(--marinho); color: #fff; padding: 12px 14px; border-radius: 10px; display: none; z-index: 5; }
+</style>
+</head>
+<body>
+<header><h1>Painel das Centrais</h1><button id="sair" hidden>Sair</button></header>
+<main>
+	<section class="cartao" id="tela-senha">
+		<h2>Entrar</h2>
+		<input id="email" type="email" autocomplete="username" value="rafaeljoseribeiropinheiro@gmail.com">
+		<input id="senha" type="password" autocomplete="current-password" placeholder="senha do Painel">
+		<button class="principal" id="b-entrar">Entrar</button>
+	</section>
+	<section class="cartao" id="tela-codigo" hidden>
+		<h2>Código do celular</h2>
+		<p class="det">Os 6 números do app autenticador.</p>
+		<input id="codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+		<button class="principal" id="b-codigo">Confirmar</button>
+	</section>
+	<p class="erro" id="erro"></p>
+	<div id="conteudo" hidden style="display:grid;gap:12px">
+		<div class="cartao" id="faixa-chave"></div>
+		<div class="abas"><button data-aba="alfa" class="ativa">Alfa</button><button data-aba="beta">Beta</button><button data-aba="versoes">Versões</button><button data-aba="erros">Erros</button><button data-aba="sugestoes">Sugestões</button></div>
+		<div id="lista" style="display:grid;gap:10px"></div>
+	</div>
+</main>
+<div id="aviso"></div>
+<script>
+// Painel no celular (BACKLOG I9). Sem servidor: fala direto com o Supabase. Login só na memória (recarregar = entrar de
+// novo), com código do celular (o banco só responde ao administrador com 2 etapas). A chave de assinatura vem TRANCADA
+// do banco e só abre com a senha de assinatura, aqui no aparelho; destravada fica só na memória por 15 minutos.
+// Publicar versão nova continua no computador (precisa montar o pacote).
+const URL_SB = 'https://jgjyrkbftxznsfqvwrgt.supabase.co' // trocados pelo publicar-celular.mjs (nuvem.json)
+const CHAVE_SB = 'sb_publishable_eBgdgsuIGMCtd12OWh4bAA_AOPptDDZ'
+const $ = (s) => document.querySelector(s)
+const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+const quando = (v) => { if (!v) return '—'; const m = Math.round((Date.now() - new Date(v)) / 60000); return m < 2 ? 'agora' : m < 60 ? `há ${m} min` : m < 1440 ? `há ${Math.round(m / 60)} h` : new Date(v).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }
+function aviso(t) { const a = $('#aviso'); a.textContent = t; a.style.display = 'block'; clearTimeout(aviso.t); aviso.t = setTimeout(() => (a.style.display = 'none'), 4500) }
+
+let sessao = null, fator = null, dados = null, aba = 'alfa', chave = null // chave = { k: CryptoKey, ate }
+async function pedir(caminho, { metodo = 'GET', corpo, prefer } = {}) {
+	if (sessao && sessao.expira < Date.now()) await renovar()
+	const r = await fetch(URL_SB + caminho, { method: metodo, headers: { apikey: CHAVE_SB, 'content-type': 'application/json', ...(sessao ? { authorization: 'Bearer ' + sessao.token } : {}), ...(prefer ? { prefer } : {}) }, body: corpo ? JSON.stringify(corpo) : undefined })
+	const t = await r.text(); const j = t ? JSON.parse(t) : null
+	if (!r.ok) throw new Error(/invalid login|credentials/i.test(j?.msg || j?.message || '') ? 'E-mail ou senha incorretos.' : /totp|code/i.test(j?.msg || '') ? 'Código incorreto ou vencido.' : j?.msg || j?.message || `erro ${r.status}`)
+	return j
+}
+const guardar = (s) => { sessao = { token: s.access_token, refresh: s.refresh_token, expira: Date.now() + (s.expires_in - 60) * 1000 } }
+async function renovar() { const s = sessao; sessao = null; guardar(await pedir('/auth/v1/token?grant_type=refresh_token', { metodo: 'POST', corpo: { refresh_token: s.refresh } })) }
+const rest = (c, op) => pedir('/rest/v1/' + c, op)
+
+$('#b-entrar').onclick = async () => {
+	try {
+		$('#erro').textContent = ''
+		guardar(await pedir('/auth/v1/token?grant_type=password', { metodo: 'POST', corpo: { email: $('#email').value.trim().toLowerCase(), password: $('#senha').value } }))
+		$('#senha').value = ''
+		const u = await pedir('/auth/v1/user')
+		fator = (u.factors || []).find((f) => f.factor_type === 'totp' && f.status === 'verified')
+		if (!fator) { sessao = null; throw new Error('Cadastre o código do celular primeiro no Painel do computador.') }
+		$('#tela-senha').hidden = true; $('#tela-codigo').hidden = false; $('#codigo').focus()
+	} catch (e) { $('#erro').textContent = e.message }
+}
+$('#b-codigo').onclick = async () => {
+	try {
+		const d = await pedir(`/auth/v1/factors/${fator.id}/challenge`, { metodo: 'POST', corpo: {} })
+		guardar(await pedir(`/auth/v1/factors/${fator.id}/verify`, { metodo: 'POST', corpo: { challenge_id: d.id, code: $('#codigo').value.replace(/\D/g, '') } }))
+		$('#codigo').value = ''; $('#erro').textContent = ''
+		$('#tela-codigo').hidden = true; $('#conteudo').hidden = false; $('#sair').hidden = false
+		carregar()
+	} catch (e) { $('#erro').textContent = e.message }
+}
+$('#sair').onclick = () => location.reload()
+
+/* ---------- chave: trancada no banco, aberta só aqui com a senha de assinatura ---------- */
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
+async function chaveParaAssinar() {
+	if (chave && chave.ate > Date.now()) { chave.ate = Date.now() + 15 * 60000; return chave.k }
+	chave = null
+	const [linha] = await rest('chave_admin?select=cifra&id=eq.1')
+	if (!linha) throw new Error('A chave trancada ainda não foi enviada: no Painel do computador, "Enviar chave trancada ao celular".')
+	const senha = prompt('Senha de assinatura:')
+	if (!senha) throw new Error('Cancelado.')
+	const c = linha.cifra, s = crypto.subtle
+	try {
+		const base = await s.importKey('raw', new TextEncoder().encode(senha), 'PBKDF2', false, ['deriveKey'])
+		const aes = await s.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: b64(c.sal), iterations: c.iteracoes }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt'])
+		const der = await s.decrypt({ name: 'AES-GCM', iv: b64(c.iv) }, aes, b64(c.cifra))
+		chave = { k: await s.importKey('pkcs8', der, { name: 'Ed25519' }, false, ['sign']), ate: Date.now() + 15 * 60000 }
+	} catch (e) { throw new Error(/Ed25519|not supported|Unrecognized/i.test(String(e)) ? 'Este navegador não assina Ed25519: atualize o navegador (Chrome, Safari ou Firefox recentes).' : 'Senha de assinatura incorreta.') }
+	desenharChave()
+	return chave.k
+}
+async function assinar(texto) {
+	const k = await chaveParaAssinar()
+	const a = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, k, new TextEncoder().encode(texto)))
+	return btoa(String.fromCharCode(...a))
+}
+function desenharChave() {
+	const aberta = chave && chave.ate > Date.now()
+	$('#faixa-chave').innerHTML = aberta
+		? `<div class="linha" style="justify-content:space-between"><span><span class="selo ok">Chave destravada</span> tranca em 15 min sem uso</span><button id="b-trancar">Trancar</button></div>`
+		: `<div class="linha" style="justify-content:space-between"><span><span class="selo neutro">Chave trancada</span> pede a senha ao mandar um comando</span></div>`
+	const t = $('#b-trancar'); if (t) t.onclick = () => { chave = null; desenharChave() }
+}
+// Mesmos textos assinados do Painel do computador (controle.mjs): a ordem dos campos importa.
+const textoEstado = (e) => JSON.stringify({ central: e.central, seq: e.seq, situacao: e.situacao, mensagem: e.mensagem, login: e.login })
+const textoComando = (c) => JSON.stringify({ id: c.id, central: c.central, tipo: c.tipo, dados: c.dados, criadoEm: c.criado_em })
+async function definirSituacao(c, mudanca) {
+	const atual = c.estado || { situacao: 'normal', mensagem: '', login: 'livre', seq: 0 }
+	const estado = { central: c.id, seq: Math.max(Number(atual.seq || 0) + 1, Date.now()), situacao: mudanca.situacao ?? atual.situacao, mensagem: mudanca.mensagem ?? (mudanca.situacao && mudanca.situacao !== atual.situacao ? '' : atual.mensagem), login: mudanca.login ?? atual.login }
+	await rest(`centrais?id=eq.${c.id}`, { metodo: 'PATCH', corpo: { estado, estado_assinatura: await assinar(textoEstado(estado)) }, prefer: 'return=minimal' })
+	c.estado = estado
+}
+async function comandar(c, tipo, d = {}) {
+	const x = { id: crypto.randomUUID(), central: c.id, tipo, dados: d, criado_em: Date.now() }
+	await rest('comandos', { metodo: 'POST', corpo: { ...x, assinatura: await assinar(textoComando(x)) }, prefer: 'return=minimal' })
+}
+const ACOES = {
+	manutencao: ['Manutenção', (c, m) => definirSituacao(c, { situacao: 'manutencao', mensagem: m || 'Rafael está fazendo um ajuste na sua Central. Entre em contato com ele.' }), 'mensagem'],
+	liberar: ['Liberar (voltar ao normal)', (c) => definirSituacao(c, { situacao: 'normal', mensagem: '' })],
+	encerrar: ['Encerrar teste', (c, m) => definirSituacao(c, { situacao: 'encerrada', mensagem: m || 'O período de testes terminou. Para continuar usando a Central Jurídica, entre em contato com Rafael.' }), 'mensagem', 'beta'],
+	'sair-claude': ['Sair do Claude (login bloqueado)', async (c) => { await definirSituacao(c, { login: 'bloqueado' }); await comandar(c, 'sair-claude') }, 'confirmar'],
+	'sair-claude-autorizado': ['Sair do Claude com login autorizado', async (c) => { await definirSituacao(c, { login: 'bloqueado' }); await comandar(c, 'sair-claude', { autorizarLogin: true }) }, 'confirmar'],
+	'autorizar-login': ['Autorizar um login', (c) => comandar(c, 'autorizar-login')],
+	'liberar-login': ['Liberar login de vez', (c) => definirSituacao(c, { login: 'livre' })],
+	'sair-supabase': ['Sair do login do escritório', (c) => comandar(c, 'sair-supabase'), 'confirmar', 'alfa'],
+	'desconectar-whatsapp': ['Desconectar WhatsApp', (c) => comandar(c, 'desconectar-whatsapp'), 'confirmar'],
+	'atualizar-agora': ['Atualizar agora', (c) => comandar(c, 'atualizar-agora')],
+	reiniciar: ['Reiniciar a Central', (c) => comandar(c, 'reiniciar')],
+	desinstalar: ['Desinstalar (apaga skill e app)', (c) => comandar(c, 'desinstalar'), 'nome'],
+}
+
+/* ---------- telas ---------- */
+async function carregar() {
+	try {
+		const [centrais, versoes, erros, sugestoes] = await Promise.all([
+			rest('centrais?select=id,nome,computador,edicao,versao,canal,aceita,estado,informado,ultimo_contato&order=criada_em.asc'),
+			rest('versoes?select=versao,edicao,canal,tamanho,novidades&order=id.desc&limit=10'),
+			rest('erros?select=central,dia,tipo,detalhe,contagem&order=ultimo.desc&limit=60'),
+			rest('sugestoes?select=central,texto,criada_em&order=criada_em.desc&limit=40').catch(() => []),
+		])
+		dados = { centrais, versoes, erros, sugestoes }
+		desenharChave(); desenhar()
+	} catch (e) { aviso(e.message) }
+}
+const SIT = { normal: ['Normal', 'ok'], manutencao: ['Manutenção', 'alerta'], encerrada: ['Encerrada', 'alerta'] }
+function desenhar() {
+	const nomes = Object.fromEntries(dados.centrais.map((c) => [c.id, c.nome || c.computador]))
+	const l = $('#lista')
+	if (aba === 'alfa' || aba === 'beta') {
+		const cs = dados.centrais.filter((c) => c.edicao === aba)
+		l.innerHTML = cs.length ? cs.map((c) => {
+			const s = c.estado || {}, [r, cor] = SIT[s.situacao] || SIT.normal
+			const ops = Object.entries(ACOES).filter(([, a]) => !a[3] || a[3] === c.edicao).map(([k, a]) => `<option value="${k}">${esc(a[0])}</option>`).join('')
+			return `<div class="cartao" data-id="${c.id}"><div class="linha" style="justify-content:space-between"><b>${esc(c.nome || '(sem nome)')}</b><span class="selo ${cor}">${r}</span></div>
+				<p class="det">${esc(c.computador || '')} · ${esc(c.versao || '')} · canal ${c.canal} · ${quando(c.ultimo_contato)}${s.login === 'bloqueado' ? ' · login bloqueado' : ''}</p>
+				${c.aceita ? `<div class="linha"><select data-acao style="flex:1">${ops}</select><button class="principal" data-fazer>Fazer</button></div>` : '<button class="principal" data-aceitar>Aceitar esta Central</button>'}</div>`
+		}).join('') : '<p class="det">Nenhuma Central nesta edição.</p>'
+	} else if (aba === 'versoes') {
+		l.innerHTML = dados.versoes.map((v) => `<div class="cartao"><div class="linha" style="justify-content:space-between"><b>${esc(v.versao)} · ${v.edicao}</b><span class="selo ${v.canal === 'normal' ? 'ok' : 'neutro'}">${v.canal}</span></div><p class="det">${esc(v.novidades || '')}</p>${v.canal === 'teste' ? `<button class="principal" data-liberar="${esc(v.versao)}" data-edicao="${v.edicao}">Liberar para todas (${v.edicao})</button>` : ''}</div>`).join('') || '<p class="det">Nenhuma versão.</p>'
+	} else if (aba === 'erros') {
+		l.innerHTML = dados.erros.map((e) => `<div class="cartao"><div class="linha" style="justify-content:space-between"><b>${esc(nomes[e.central] || '')}</b><span class="selo ${e.tipo === 'propriedade' ? 'alerta' : 'neutro'}">${esc(e.tipo)} ${e.contagem > 1 ? '×' + e.contagem : ''}</span></div><p class="det">${esc(e.dia)} · ${esc(e.detalhe)}</p></div>`).join('') || '<p class="det">Nenhum erro.</p>'
+	} else {
+		l.innerHTML = dados.sugestoes.map((s) => `<div class="cartao"><b>${esc(nomes[s.central] || '')}</b><p class="det">${quando(s.criada_em)}</p><p style="margin:0">${esc(s.texto)}</p></div>`).join('') || '<p class="det">Nenhuma sugestão.</p>'
+	}
+}
+document.addEventListener('click', async (e) => {
+	const b = e.target.closest('button'); if (!b) return
+	try {
+		if (b.dataset.aba) { aba = b.dataset.aba; document.querySelectorAll('[data-aba]').forEach((x) => x.classList.toggle('ativa', x === b)); return desenhar() }
+		const card = b.closest('[data-id]'), c = card && dados.centrais.find((x) => x.id === card.dataset.id)
+		if (b.hasAttribute('data-aceitar')) { await rest(`centrais?id=eq.${c.id}`, { metodo: 'PATCH', corpo: { aceita: true }, prefer: 'return=minimal' }); aviso('Aceita.') }
+		else if (b.hasAttribute('data-fazer')) {
+			const k = card.querySelector('[data-acao]').value, [nome, fn, extra] = ACOES[k]
+			let m
+			if (extra === 'mensagem') { m = prompt('Mensagem que ela vai ver (em branco = padrão):', ''); if (m === null) return }
+			if (extra === 'confirmar' && !confirm(`${nome} na Central de ${c.nome}? Antes, a Central dela faz o backup completo.`)) return
+			if (extra === 'nome' && prompt(`Desinstalar a Central de ${c.nome}? Não tem volta. Para confirmar, digite o nome: ${c.nome}`) !== c.nome) return aviso('Cancelado.')
+			await fn(c, m)
+			aviso(`${nome}: enviado. A Central aplica em até 1 minuto (ou quando ligar).`)
+		}
+		else if (b.dataset.liberar) { if (!confirm(`Liberar ${b.dataset.liberar} para todas as Centrais ${b.dataset.edicao}?`)) return; await rest(`versoes?versao=eq.${encodeURIComponent(b.dataset.liberar)}&edicao=eq.${b.dataset.edicao}`, { metodo: 'PATCH', corpo: { canal: 'normal' }, prefer: 'return=minimal' }); aviso('Liberada.') }
+		else return
+		carregar()
+	} catch (err) { aviso(err.message) }
+})
+setInterval(() => { if (!$('#conteudo').hidden && !document.querySelector('select:focus')) carregar() }, 30000)
+</script>
+</body>
+</html>
