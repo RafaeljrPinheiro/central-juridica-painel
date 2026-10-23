@@ -173,6 +173,17 @@ async function carregar() {
 	} catch (e) { aviso(e.message) }
 }
 const SIT = { normal: ['Normal', 'ok'], manutencao: ['Manutenção', 'alerta'], encerrada: ['Encerrada', 'alerta'] }
+function compararVersoes(a, b) {
+	const p = (v) => { const [n, pre] = String(v).split('-'); return [...n.split('.').map(Number), pre ? Number(pre.split('.').pop()) || 0 : Infinity] }
+	const x = p(a), y = p(b)
+	for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i] > y[i] ? 1 : -1
+	return 0
+}
+function seloVersao(c) {
+	if (!c.aceita || !c.versao) return ''
+	const alvo = dados.versoes.filter((v) => v.edicao === c.edicao && (v.canal === 'normal' || c.canal === 'teste')).map((v) => v.versao).sort(compararVersoes).at(-1)
+	return !alvo || compararVersoes(c.versao, alvo) >= 0 ? ' <span class="selo ok">em dia</span>' : ` <span class="selo alerta">tem a ${esc(alvo)}</span>`
+}
 function desenhar() {
 	const nomes = Object.fromEntries(dados.centrais.map((c) => [c.id, c.nome || c.computador]))
 	const l = $('#lista')
@@ -182,7 +193,7 @@ function desenhar() {
 			const s = c.estado || {}, [r, cor] = SIT[s.situacao] || SIT.normal
 			const ops = Object.entries(ACOES).filter(([, a]) => !a[3] || a[3] === c.edicao).map(([k, a]) => `<option value="${k}">${esc(a[0])}</option>`).join('')
 			return `<div class="cartao" data-id="${c.id}"><div class="linha" style="justify-content:space-between"><b>${esc(c.nome || '(sem nome)')}</b><span class="selo ${cor}">${r}</span></div>
-				<p class="det">${esc(c.computador || '')} · ${esc(c.versao || '')} · canal ${c.canal} · ${quando(c.ultimo_contato)}${s.login === 'bloqueado' ? ' · login bloqueado' : ''}</p>
+				<p class="det">${esc(c.computador || '')} · ${esc(c.versao || '')}${seloVersao(c)} · canal ${c.canal} · ${quando(c.ultimo_contato)}${s.login === 'bloqueado' ? ' · login bloqueado' : ''}</p>
 				${c.aceita ? `<div class="linha"><select data-acao style="flex:1">${ops}</select><button class="principal" data-fazer>Fazer</button></div>` : '<button class="principal" data-aceitar>Aceitar esta Central</button>'}</div>`
 		}).join('') : '<p class="det">Nenhuma Central nesta edição.</p>'
 	} else if (aba === 'versoes') {
