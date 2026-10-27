@@ -28,6 +28,7 @@ button.principal { background: var(--latao); border-color: var(--latao); color: 
 .ok { color: var(--ok); } .alerta { color: var(--alerta); } .neutro { color: var(--suave); }
 .abas { display: flex; gap: 6px; overflow-x: auto; }
 .abas button { flex: none; padding: 8px 14px; }
+details.cartao summary { cursor: pointer; }
 .abas button.ativa { background: var(--marinho); color: #fff; border-color: var(--marinho); }
 .linha { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 #aviso { position: fixed; bottom: 16px; left: 16px; right: 16px; background: var(--marinho); color: #fff; padding: 12px 14px; border-radius: 10px; display: none; z-index: 5; }
@@ -51,7 +52,9 @@ button.principal { background: var(--latao); border-color: var(--latao); color: 
 	<p class="erro" id="erro"></p>
 	<div id="conteudo" hidden style="display:grid;gap:12px">
 		<div class="cartao" id="faixa-chave"></div>
-		<div class="abas"><button data-aba="alfa" class="ativa">Alfa</button><button data-aba="beta">Beta</button><button data-aba="versoes">Versões</button><button data-aba="erros">Erros</button><button data-aba="sugestoes">Sugestões</button></div>
+		<h2 style="margin:4px 2px 0">Advogadas</h2>
+		<div id="centrais" style="display:grid;gap:10px"></div>
+		<div class="abas"><button data-aba="versoes" class="ativa">Versões</button><button data-aba="erros" id="aba-erros">Erros e alertas</button><button data-aba="uso" id="aba-uso">Uso e sugestões</button></div>
 		<div id="lista" style="display:grid;gap:10px"></div>
 	</div>
 </main>
@@ -68,7 +71,7 @@ const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const quando = (v) => { if (!v) return '—'; const m = Math.round((Date.now() - new Date(v)) / 60000); return m < 2 ? 'agora' : m < 60 ? `há ${m} min` : m < 1440 ? `há ${Math.round(m / 60)} h` : new Date(v).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }
 function aviso(t) { const a = $('#aviso'); a.textContent = t; a.style.display = 'block'; clearTimeout(aviso.t); aviso.t = setTimeout(() => (a.style.display = 'none'), 4500) }
 
-let sessao = null, fator = null, dados = null, aba = 'alfa', chave = null // chave = { k: CryptoKey, ate }
+let sessao = null, fator = null, dados = null, aba = 'versoes', chave = null // chave = { k: CryptoKey, ate }
 async function pedir(caminho, { metodo = 'GET', corpo, prefer } = {}) {
 	if (sessao && sessao.expira < Date.now()) await renovar()
 	const r = await fetch(URL_SB + caminho, { method: metodo, headers: { apikey: CHAVE_SB, 'content-type': 'application/json', ...(sessao ? { authorization: 'Bearer ' + sessao.token } : {}), ...(prefer ? { prefer } : {}) }, body: corpo ? JSON.stringify(corpo) : undefined })
@@ -161,49 +164,84 @@ const ACOES = {
 	desinstalar: ['Desinstalar (apaga skill e app)', (c) => comandar(c, 'desinstalar'), 'nome'],
 }
 
-/* ---------- telas ---------- */
+/* ---------- telas: o mesmo desenho do Painel do computador (uma lista de advogadas, uma versão por vez) ---------- */
 async function carregar() {
 	try {
-		const [centrais, versoes, erros, sugestoes] = await Promise.all([
+		const [centrais, versoes, erros, sugestoes, uso] = await Promise.all([
 			rest('centrais?select=id,nome,computador,edicao,versao,canal,aceita,estado,informado,ultimo_contato&order=criada_em.asc'),
-			rest('versoes?select=versao,edicao,canal,tamanho,novidades&order=id.desc&limit=10'),
-			rest('erros?select=central,dia,tipo,detalhe,contagem&order=ultimo.desc&limit=60'),
+			rest('versoes?select=versao,edicao,canal,tamanho,novidades&order=id.desc&limit=20'),
+			rest('erros?select=central,dia,tipo,detalhe,contagem,versao,ultimo&order=ultimo.desc&limit=60'),
 			rest('sugestoes?select=central,texto,criada_em&order=criada_em.desc&limit=40').catch(() => []),
+			rest('uso?select=central,dia,contadores&order=dia.desc&limit=300').catch(() => []),
 		])
-		dados = { centrais, versoes, erros, sugestoes }
+		dados = { centrais, versoes, erros, sugestoes, uso }
 		desenharChave(); desenhar()
 	} catch (e) { aviso(e.message) }
 }
 const SIT = { normal: ['Normal', 'ok'], manutencao: ['Manutenção', 'alerta'], encerrada: ['Encerrada', 'alerta'] }
+// Mesma comparação da Central (controle.mjs): 1.0.10 > 1.0.0-beta.9.
 function compararVersoes(a, b) {
 	const p = (v) => { const [n, pre] = String(v).split('-'); return [...n.split('.').map(Number), pre ? Number(pre.split('.').pop()) || 0 : Infinity] }
 	const x = p(a), y = p(b)
 	for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i] > y[i] ? 1 : -1
 	return 0
 }
-function seloVersao(c) {
-	if (!c.aceita || !c.versao) return ''
-	const alvo = dados.versoes.filter((v) => v.edicao === c.edicao && (v.canal === 'normal' || c.canal === 'teste')).map((v) => v.versao).sort(compararVersoes).at(-1)
-	return !alvo || compararVersoes(c.versao, alvo) >= 0 ? ' <span class="selo ok">em dia</span>' : ` <span class="selo alerta">tem a ${esc(alvo)}</span>`
-}
+const maisNova = (edicao) => dados.versoes.filter((v) => v.edicao === edicao).sort((a, b) => compararVersoes(a.versao, b.versao)).at(-1)
+const desatualizada = (c) => { const v = c.aceita && c.versao && maisNova(c.edicao); return v && compararVersoes(c.versao, v.versao) < 0 ? v : null }
+const TIPOS_ERRO = { propriedade: 'Tentativa de copiar a ferramenta', internet: 'Internet', limite: 'Limite da conta', conta: 'Conta do Claude', servico: 'Serviço do Claude', motor: 'Motor parou', app: 'Erro no app', 'app-falha': 'App fechou com erro', tela: 'Erro na tela', sincronizacao: 'Sincronização', avisos: 'Quadro de avisos' }
+
 function desenhar() {
 	const nomes = Object.fromEntries(dados.centrais.map((c) => [c.id, c.nome || c.computador]))
+	const lista = [...dados.centrais].sort((a, b) => (a.edicao === b.edicao ? String(a.nome).localeCompare(String(b.nome)) : a.edicao > b.edicao ? 1 : -1))
+	$('#centrais').innerHTML = lista.length ? lista.map((c) => {
+		const s = c.estado || {}, inf = c.informado || {}, [r, cor] = SIT[s.situacao] || SIT.normal
+		const nova = desatualizada(c)
+		const ops = Object.entries(ACOES).filter(([, a]) => !a[3] || a[3] === c.edicao).map(([k, a]) => `<option value="${k}">${esc(a[0])}</option>`).join('')
+		return `<div class="cartao" data-id="${c.id}">
+			<div class="linha" style="justify-content:space-between"><span><b>${esc(c.nome || '(sem nome)')}</b> <span class="selo ${c.edicao === 'beta' ? 'alerta' : 'neutro'}">${c.edicao === 'beta' ? 'Beta' : 'Alfa'}</span></span><span class="selo ${cor}">${r}</span></div>
+			<p class="det">${esc(c.computador || '')} · ${quando(c.ultimo_contato)}${inf.logado === false ? ' · Claude desconectado' : ''}${s.login === 'bloqueado' ? ' · login bloqueado' : ''}</p>
+			<p style="margin:0">Versão <b>${esc(c.versao || '—')}</b> ${c.aceita && c.versao && !nova ? '<span class="selo ok">em dia</span>' : ''}</p>
+			${inf.atualizacao && !inf.atualizacao.ok ? `<p class="erro">Falhou a ${esc(inf.atualizacao.versao)}: ${esc(inf.atualizacao.erro)}</p>` : ''}
+			${nova ? `<button class="principal" data-atualizar="${esc(nova.versao)}">Atualizar para ${esc(nova.versao)}</button>` : ''}
+			${c.aceita ? `<div class="linha"><select data-acao style="flex:1">${ops}</select><button data-fazer>Fazer</button></div>` : '<button class="principal" data-aceitar>Aceitar esta Central</button>'}
+			<div class="linha"><button data-renomear>Corrigir o nome</button><button data-excluir>Excluir</button></div></div>`
+	}).join('') : '<p class="det">Nenhuma Central ainda.</p>'
+	const alertas = dados.erros.filter((e) => e.tipo === 'propriedade' && Date.now() - new Date(e.ultimo) < 7 * 864e5).length
+	$('#aba-erros').textContent = alertas ? `Erros (${alertas} ⚠)` : 'Erros e alertas'
 	const l = $('#lista')
-	if (aba === 'alfa' || aba === 'beta') {
-		const cs = dados.centrais.filter((c) => c.edicao === aba)
-		l.innerHTML = cs.length ? cs.map((c) => {
-			const s = c.estado || {}, [r, cor] = SIT[s.situacao] || SIT.normal
-			const ops = Object.entries(ACOES).filter(([, a]) => !a[3] || a[3] === c.edicao).map(([k, a]) => `<option value="${k}">${esc(a[0])}</option>`).join('')
-			return `<div class="cartao" data-id="${c.id}"><div class="linha" style="justify-content:space-between"><b>${esc(c.nome || '(sem nome)')}</b><span class="selo ${cor}">${r}</span></div>
-				<p class="det">${esc(c.computador || '')} · ${esc(c.versao || '')}${seloVersao(c)} · canal ${c.canal} · ${quando(c.ultimo_contato)}${s.login === 'bloqueado' ? ' · login bloqueado' : ''}</p>
-				${c.aceita ? `<div class="linha"><select data-acao style="flex:1">${ops}</select><button class="principal" data-fazer>Fazer</button></div>` : '<button class="principal" data-aceitar>Aceitar esta Central</button>'}</div>`
-		}).join('') : '<p class="det">Nenhuma Central nesta edição.</p>'
-	} else if (aba === 'versoes') {
-		l.innerHTML = dados.versoes.map((v) => `<div class="cartao"><div class="linha" style="justify-content:space-between"><b>${esc(v.versao)} · ${v.edicao}</b><span class="selo ${v.canal === 'normal' ? 'ok' : 'neutro'}">${v.canal}</span></div><p class="det">${esc(v.novidades || '')}</p>${v.canal === 'teste' ? `<button class="principal" data-liberar="${esc(v.versao)}" data-edicao="${v.edicao}">Liberar para todas (${v.edicao})</button>` : ''}</div>`).join('') || '<p class="det">Nenhuma versão.</p>'
+	if (aba === 'versoes') {
+		const grupos = {}
+		for (const v of dados.versoes) (grupos[v.versao] ||= { versao: v.versao, linhas: [], novidades: v.novidades }).linhas.push(v)
+		const ordem = Object.values(grupos).sort((a, b) => compararVersoes(b.versao, a.versao))
+		const liberada = (g) => g.linhas.every((v) => v.canal === 'normal')
+		const u = ordem[0]
+		if (!u) { l.innerHTML = '<p class="det">Nenhuma versão publicada ainda.</p>'; return }
+		const comEla = dados.centrais.filter((c) => c.aceita && c.versao && compararVersoes(c.versao, u.versao) >= 0).map((c) => c.nome || c.computador)
+		l.innerHTML = `<div class="cartao"><div class="linha" style="justify-content:space-between"><b style="font-size:17px">Versão mais nova: ${esc(u.versao)}</b><span class="selo ${liberada(u) ? 'ok' : 'neutro'}">${liberada(u) ? 'disponível para todas' : 'ainda não liberada'}</span></div>
+			<p class="det">${esc(u.novidades || '')}</p>
+			<p class="det">Já estão nela: ${comEla.length ? esc(comEla.join(', ')) : 'ninguém ainda'}.</p>
+			${liberada(u) ? '' : `<button data-liberar="${esc(u.versao)}">Deixar disponível</button><p class="det">Cada Central instala quando a advogada fechar e abrir.</p>`}
+			<button class="principal" data-aplicar="${esc(u.versao)}">Aplicar agora em todas</button><p class="det">Instala assim que não houver conversa trabalhando e reabre sozinha.</p></div>
+			${ordem.length > 1 ? `<details class="cartao"><summary class="det">Versões anteriores (${ordem.length - 1})</summary>${ordem.slice(1).map((g) => `<p style="margin:8px 0 0"><b>${esc(g.versao)}</b> <span class="selo ${liberada(g) ? 'ok' : 'neutro'}">${liberada(g) ? 'liberada' : 'não liberada'}</span><br><span class="det">${esc(g.novidades || '')}</span></p>`).join('')}</details>` : ''}
+			<p class="det">Publicar uma versão nova continua no computador (precisa montar o pacote).</p>`
 	} else if (aba === 'erros') {
-		l.innerHTML = dados.erros.map((e) => `<div class="cartao"><div class="linha" style="justify-content:space-between"><b>${esc(nomes[e.central] || '')}</b><span class="selo ${e.tipo === 'propriedade' ? 'alerta' : 'neutro'}">${esc(e.tipo)} ${e.contagem > 1 ? '×' + e.contagem : ''}</span></div><p class="det">${esc(e.dia)} · ${esc(e.detalhe)}</p></div>`).join('') || '<p class="det">Nenhum erro.</p>'
+		l.innerHTML = dados.erros.map((e) => `<div class="cartao"><div class="linha" style="justify-content:space-between"><b>${esc(nomes[e.central] || '')}</b><span class="selo ${e.tipo === 'propriedade' ? 'alerta' : 'neutro'}">${esc(TIPOS_ERRO[e.tipo] || e.tipo)}${e.contagem > 1 ? ' ×' + e.contagem : ''}</span></div><p class="det">${esc(e.dia.split('-').reverse().join('/'))}${e.versao ? ' · v' + esc(e.versao) : ''} · ${esc(e.detalhe)}</p></div>`).join('') || '<p class="det">Nenhum erro registrado.</p>'
 	} else {
-		l.innerHTML = dados.sugestoes.map((s) => `<div class="cartao"><b>${esc(nomes[s.central] || '')}</b><p class="det">${quando(s.criada_em)}</p><p style="margin:0">${esc(s.texto)}</p></div>`).join('') || '<p class="det">Nenhuma sugestão.</p>'
+		const por = {}
+		for (const u of dados.uso) {
+			if (Date.now() - new Date(u.dia) > 30 * 864e5) continue
+			const a = (por[u.central] ||= { dias: 0, msg: 0, doc: 0, esc: 0, sus: 0 })
+			a.dias++
+			for (const [k, v] of Object.entries(u.contadores || {})) {
+				if (k.startsWith('mensagem-')) a.msg += v
+				else if (k === 'documento-gerado') a.doc += v
+				else if (k === 'escritorio-registro') a.esc += v
+				else if (k === 'sustentacao') a.sus += v
+			}
+		}
+		l.innerHTML = `<div class="cartao"><b>Uso nos últimos 30 dias</b><p class="det">Só contagens, nada do conteúdo. "Áudios" soma sustentação oral e atendimento gravado.</p>
+			${Object.keys(por).length ? Object.entries(por).map(([id, a]) => `<p style="margin:0"><b>${esc(nomes[id] || '')}</b>: ${a.dias} dia(s), ${a.msg} mensagens, ${a.doc} documentos, ${a.esc} registros no Escritório, ${a.sus} áudios</p>`).join('') : '<p class="det">Nenhum uso registrado ainda.</p>'}</div>
+			${dados.sugestoes.map((s) => `<div class="cartao"><b>${esc(nomes[s.central] || '')}</b><p class="det">${quando(s.criada_em)}</p><p style="margin:0">${esc(s.texto)}</p></div>`).join('') || '<p class="det">Nenhuma sugestão.</p>'}`
 	}
 }
 document.addEventListener('click', async (e) => {
@@ -211,17 +249,33 @@ document.addEventListener('click', async (e) => {
 	try {
 		if (b.dataset.aba) { aba = b.dataset.aba; document.querySelectorAll('[data-aba]').forEach((x) => x.classList.toggle('ativa', x === b)); return desenhar() }
 		const card = b.closest('[data-id]'), c = card && dados.centrais.find((x) => x.id === card.dataset.id)
+		const nome = c?.nome || c?.computador
 		if (b.hasAttribute('data-aceitar')) { await rest(`centrais?id=eq.${c.id}`, { metodo: 'PATCH', corpo: { aceita: true }, prefer: 'return=minimal' }); aviso('Aceita.') }
+		else if (b.dataset.atualizar) {
+			// Só ela: recebe a versão mesmo que ainda não esteja liberada para todas (canal teste), igual ao computador.
+			if (!confirm(`Atualizar a Central de ${nome} para a ${b.dataset.atualizar}? Ela instala quando não houver conversa trabalhando e reabre.`)) return
+			if (c.canal !== 'teste' && maisNova(c.edicao)?.canal === 'teste') await rest(`centrais?id=eq.${c.id}`, { metodo: 'PATCH', corpo: { canal: 'teste' }, prefer: 'return=minimal' })
+			await comandar(c, 'atualizar-agora')
+			aviso(`${nome}: atualização enviada. Em até 1 minuto a Central dela baixa e instala.`)
+		}
+		else if (b.dataset.liberar) { await rest(`versoes?versao=eq.${encodeURIComponent(b.dataset.liberar)}`, { metodo: 'PATCH', corpo: { canal: 'normal' }, prefer: 'return=minimal' }); aviso('Disponível para todas: instala quando cada uma fechar e abrir.') }
+		else if (b.dataset.aplicar) {
+			if (!confirm(`Aplicar a ${b.dataset.aplicar} agora em todas as advogadas?`)) return
+			await rest(`versoes?versao=eq.${encodeURIComponent(b.dataset.aplicar)}`, { metodo: 'PATCH', corpo: { canal: 'normal' }, prefer: 'return=minimal' })
+			for (const x of dados.centrais.filter((x) => x.aceita && compararVersoes(x.versao || '0', b.dataset.aplicar) < 0)) await comandar(x, 'atualizar-agora')
+			aviso('Aplicando em todas: cada Central instala em até 1 minuto (ou quando ligar).')
+		}
+		else if (b.hasAttribute('data-renomear')) { const n = prompt('Nome da advogada:', nome || ''); if (!n) return; await rest(`centrais?id=eq.${c.id}`, { metodo: 'PATCH', corpo: { nome: n.trim().slice(0, 120) }, prefer: 'return=minimal' }) }
+		else if (b.hasAttribute('data-excluir')) { if (!confirm(`Excluir ${nome} do controle? Se a Central abrir de novo, ela volta como "aguardando aceite".`)) return; await rest(`centrais?id=eq.${c.id}`, { metodo: 'DELETE', prefer: 'return=minimal' }) }
 		else if (b.hasAttribute('data-fazer')) {
-			const k = card.querySelector('[data-acao]').value, [nome, fn, extra] = ACOES[k]
+			const k = card.querySelector('[data-acao]').value, [rotulo, fn, extra] = ACOES[k]
 			let m
 			if (extra === 'mensagem') { m = prompt('Mensagem que ela vai ver (em branco = padrão):', ''); if (m === null) return }
-			if (extra === 'confirmar' && !confirm(`${nome} na Central de ${c.nome}? Antes, a Central dela faz o backup completo.`)) return
-			if (extra === 'nome' && prompt(`Desinstalar a Central de ${c.nome}? Não tem volta. Para confirmar, digite o nome: ${c.nome}`) !== c.nome) return aviso('Cancelado.')
+			if (extra === 'confirmar' && !confirm(`${rotulo} na Central de ${nome}? Antes, a Central dela faz o backup completo.`)) return
+			if (extra === 'nome' && prompt(`Desinstalar a Central de ${nome}? Não tem volta. Para confirmar, digite o nome: ${nome}`) !== nome) return aviso('Cancelado.')
 			await fn(c, m)
-			aviso(`${nome}: enviado. A Central aplica em até 1 minuto (ou quando ligar).`)
+			aviso(`${rotulo}: enviado. A Central aplica em até 1 minuto (ou quando ligar).`)
 		}
-		else if (b.dataset.liberar) { if (!confirm(`Liberar ${b.dataset.liberar} para todas as Centrais ${b.dataset.edicao}?`)) return; await rest(`versoes?versao=eq.${encodeURIComponent(b.dataset.liberar)}&edicao=eq.${b.dataset.edicao}`, { metodo: 'PATCH', corpo: { canal: 'normal' }, prefer: 'return=minimal' }); aviso('Liberada.') }
 		else return
 		carregar()
 	} catch (err) { aviso(err.message) }
