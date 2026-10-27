@@ -230,17 +230,21 @@ function desenhar() {
 		const por = {}
 		for (const u of dados.uso) {
 			if (Date.now() - new Date(u.dia) > 30 * 864e5) continue
-			const a = (por[u.central] ||= { dias: 0, msg: 0, doc: 0, esc: 0, sus: 0 })
+			const a = (por[u.central] ||= { dias: 0, msg: 0, doc: 0, esc: 0, sus: 0, lk: 0, lkSeg: 0, lkLento: 0, lkFalha: 0 })
 			a.dias++
 			for (const [k, v] of Object.entries(u.contadores || {})) {
 				if (k.startsWith('mensagem-')) a.msg += v
 				else if (k === 'documento-gerado') a.doc += v
 				else if (k === 'escritorio-registro') a.esc += v
 				else if (k === 'sustentacao') a.sus += v
+				else if (k === 'link-pedido') a.lk += v
+				else if (k === 'link-segundos') a.lkSeg += v
+				else if (k === 'link-lento') a.lkLento += v
+				else if (k === 'link-falha') a.lkFalha += v
 			}
 		}
 		l.innerHTML = `<div class="cartao"><b>Uso nos últimos 30 dias</b><p class="det">Só contagens, nada do conteúdo. "Áudios" soma sustentação oral e atendimento gravado.</p>
-			${Object.keys(por).length ? Object.entries(por).map(([id, a]) => `<p style="margin:0"><b>${esc(nomes[id] || '')}</b>: ${a.dias} dia(s), ${a.msg} mensagens, ${a.doc} documentos, ${a.esc} registros no Escritório, ${a.sus} áudios</p>`).join('') : '<p class="det">Nenhum uso registrado ainda.</p>'}</div>
+			${Object.keys(por).length ? Object.entries(por).map(([id, a]) => `<p style="margin:0"><b>${esc(nomes[id] || '')}</b>: ${a.dias} dia(s), ${a.msg} mensagens, ${a.doc} documentos, ${a.esc} registros no Escritório, ${a.sus} áudios${a.lk ? `<br><span class="det">Pelo celular: ${a.lk} pedidos, média ${Math.round(a.lkSeg / a.lk)} s${a.lkLento ? `, ${a.lkLento} lentos` : ''}${a.lkFalha ? `, <span class="alerta">${a.lkFalha} falhas</span>` : ''}</span>` : ''}</p>`).join('') : '<p class="det">Nenhum uso registrado ainda.</p>'}</div>
 			${dados.sugestoes.map((s) => `<div class="cartao"><b>${esc(nomes[s.central] || '')}</b><p class="det">${quando(s.criada_em)}</p><p style="margin:0">${esc(s.texto)}</p></div>`).join('') || '<p class="det">Nenhuma sugestão.</p>'}`
 	}
 }
